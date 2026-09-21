@@ -1,8 +1,11 @@
 import mysql.connector as mysql
 import os
+import sys
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+ENV_PATH = Path(__file__).resolve().with_name(".env")
+load_dotenv(ENV_PATH)
 
 
 class DbConnector:
@@ -22,12 +25,25 @@ class DbConnector:
                  HOST="tdt4225-70.idi.ntnu.no",
                  DATABASE="Assignment2_grp70",
                  USER="aflarsen",
-                 PASSWORD = os.getenv("USER_PASSWORD")):
+                 PASSWORD=None):
+        password = PASSWORD or os.getenv("USER_PASSWORD")
+        if not password:
+            raise ValueError(
+                f"USER_PASSWORD is not set. Add USER_PASSWORD=<your database password> to {ENV_PATH}."
+            )
+
         # Connect to the database
         try:
-            self.db_connection = mysql.connect(host=HOST, database=DATABASE, user=USER, password=PASSWORD, port=3306)
-        except Exception as e:
-            print("ERROR: Failed to connect to db:", e)
+            self.db_connection = mysql.connect(
+                host=HOST,
+                database=DATABASE,
+                user=USER,
+                password=password,
+                port=3306,
+                connection_timeout=10,
+            )
+        except mysql.Error as error:
+            raise ConnectionError(f"Failed to connect to the database: {error}") from error
 
         # Get the db cursor
         self.cursor = self.db_connection.cursor()
@@ -40,9 +56,21 @@ class DbConnector:
         print("-----------------------------------------------\n")
 
     def close_connection(self):
-        # close the cursor
+        if not self.db_connection.is_connected():
+            return
+
+        server_info = self.db_connection.get_server_info()
         self.cursor.close()
-        # close the DB connection
         self.db_connection.close()
         print("\n-----------------------------------------------")
-        print("Connection to %s is closed" % self.db_connection.get_server_info())
+        print("Connection to %s is closed" % server_info)
+
+
+if __name__ == "__main__":
+    try:
+        connection = DbConnector()
+    except (ValueError, ConnectionError) as error:
+        print(f"ERROR: {error}")
+        sys.exit(1)
+    else:
+        connection.close_connection()
