@@ -32,7 +32,9 @@ reports progress every 10,000 source rows.
 - `DAY_TYPE` is omitted because it is constant in this dataset. Unix timestamps
   are converted to UTC `DATETIME` values in `Trip.start_time`.
 - Each polyline coordinate is stored in `TrajectoryPoint`. `Trip` stores the
-  point count, duration, and Haversine distance for summary queries.
+  point count, duration, and Haversine distance for summary queries. Distance
+  is `NULL` for trips with fewer than two points because no segment can be
+  measured.
 - `Trip.is_invalid` is true when a trip has fewer than three GPS points,
   matching Part 2, Question 7. Trips remain in the database so they can be
   counted and filtered. For the separate eight-point robustness check, query
