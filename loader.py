@@ -96,7 +96,9 @@ def _parse_polyline(value, line_number):
 
 
 def _calculate_distance_m(points):
-    """Sum Haversine distances between consecutive GPS points."""
+    """Sum segment distances, or return None when no segment can be measured."""
+    if len(points) < 2:
+        return None
     return sum(
         haversine((lat1, lon1), (lat2, lon2), unit=Unit.METERS)
         for (lon1, lat1), (lon2, lat2) in zip(points, points[1:])
