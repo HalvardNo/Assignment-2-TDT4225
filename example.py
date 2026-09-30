@@ -19,7 +19,7 @@ class ExampleProgram:
         self.db_connection.commit()
 
     def insert_data(self, table_name):
-        names = ['Bobby', 'Mc', 'McSmack', 'Board']
+        names = ['Halvard', 'Spiser', 'BigMac', 'og', 'Mc.Donalds']
         for name in names:
             # Take note that the name is wrapped in '' --> '%s' because it is a string,
             # while an int would be %s etc
