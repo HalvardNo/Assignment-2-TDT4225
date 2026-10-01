@@ -1,4 +1,4 @@
-"""Create the database schema and load the Porto taxi CSV."""
+"""Query the database by default; load or replace data only when requested."""
 
 import argparse
 import os
@@ -10,6 +10,7 @@ from tabulate import tabulate
 
 from DbConnector import DbConnector
 from loader import load_trips
+from queries import run_queries
 from schema import create_tables, drop_tables
 
 load_dotenv(Path(__file__).resolve().with_name(".env"))
@@ -44,12 +45,42 @@ def print_database_summary(cursor):
     )
 
 
+def repair_stored_durations(cursor, connection):
+    """Correct duration_sec in an already loaded database without reloading it."""
+    try:
+        cursor.execute(
+            """
+            UPDATE Trip
+            SET duration_sec = GREATEST(num_points - 1, 0) * 15
+            WHERE duration_sec <> GREATEST(num_points - 1, 0) * 15
+            """
+        )
+        updated_rows = cursor.rowcount
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return updated_rows
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Load the Porto taxi CSV into MySQL.")
+    parser = argparse.ArgumentParser(
+        description="Query the Porto taxi database, or explicitly load its CSV."
+    )
+    parser.add_argument(
+        "--load",
+        action="store_true",
+        help="import the CSV (without this flag, main only runs read-only queries)",
+    )
+    parser.add_argument(
+        "--repair-duration",
+        action="store_true",
+        help="correct stored Trip.duration_sec values in the existing database",
+    )
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="drop the assignment tables before recreating and reloading them",
+        help="drop existing assignment tables before loading; requires --load",
     )
     parser.add_argument(
         "--limit",
@@ -57,8 +88,25 @@ def main():
         help="load only the first N CSV rows (useful for a quick trial)",
     )
     args = parser.parse_args()
+    if args.repair_duration and (args.load or args.reset or args.limit is not None):
+        parser.error("--repair-duration cannot be combined with loading options")
+    if args.reset and not args.load:
+        parser.error("--reset requires --load; it drops the existing assignment data")
+    if args.limit is not None and not args.load:
+        parser.error("--limit requires --load")
     if args.limit is not None and args.limit < 1:
         raise ValueError("--limit must be a positive integer")
+
+    if args.repair_duration:
+        with DbConnector() as db:
+            updated_rows = repair_stored_durations(db.cursor, db.db_connection)
+        print(f"Corrected duration_sec for {updated_rows:,} trips.")
+        return
+
+    if not args.load:
+        with DbConnector() as db:
+            run_queries(db.cursor)
+        return
 
     csv_path = os.getenv("PORTO_CSV_PATH")
     if not csv_path or csv_path == "replace-with-your-porto-csv-path":
