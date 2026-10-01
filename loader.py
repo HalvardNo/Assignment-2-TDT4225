@@ -142,7 +142,7 @@ def _transform_row(row, line_number):
         start_time,
         _parse_boolean(row.get("MISSING_DATA"), line_number),
         num_points,
-        num_points * 15,
+        max(num_points - 1, 0) * 15,
         _calculate_distance_m(points),
         num_points < INVALID_POINT_THRESHOLD,
     )
