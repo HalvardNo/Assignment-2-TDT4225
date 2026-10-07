@@ -3,14 +3,18 @@
 import csv
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from haversine import Unit, haversine
 
 
 # POLYLINE values can exceed csv's default 128 KiB field limit.
 csv.field_size_limit(16 * 1024 * 1024)
+
+
+# All nine source fields are checked when detecting exact duplicate rows.
 
 CSV_COLUMNS = (
     "TRIP_ID",
@@ -24,13 +28,22 @@ CSV_COLUMNS = (
     "POLYLINE",
 )
 
-INVALID_POINT_THRESHOLD = 3
+OUTLIER_POINT_THRESHOLD = 3
+LISBON_TIMEZONE = ZoneInfo("Europe/Lisbon")
+CITY_HALL = (41.15794, -8.62911)  # latitude, longitude
+MAX_TRIP_DURATION_SEC = 2 * 60 * 60
+MAX_AVERAGE_SPEED_KMH = 120
+MIN_STATIONARY_POINTS = 20
+MIN_STATIONARY_DISTANCE_M = 200
+MAX_CITY_HALL_DISTANCE_M = 300_000
+TRIP_BATCH_SIZE = 500
+POINT_BATCH_SIZE = 10_000
 
 INSERT_TRIP = """
     INSERT INTO Trip (
         source_row_number, trip_id, taxi_id, call_type, origin_call,
         origin_stand, start_time, missing_data, num_points, duration_sec,
-        distance_m, is_invalid
+        distance_m, is_outlier
     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 INSERT_POINT = """
@@ -105,6 +118,34 @@ def _calculate_distance_m(points):
     )
 
 
+def _is_outlier_trip(points, duration_sec, distance_m):
+    """Apply the assignment rule and the EDA physical-plausibility rules."""
+    if len(points) < OUTLIER_POINT_THRESHOLD:
+        return True
+    if duration_sec >= MAX_TRIP_DURATION_SEC:
+        return True
+    if (
+        distance_m is not None
+        and duration_sec > 0
+        and distance_m / duration_sec * 3.6 > MAX_AVERAGE_SPEED_KMH
+    ):
+        return True
+    if (
+        len(points) >= MIN_STATIONARY_POINTS
+        and distance_m is not None
+        and distance_m < MIN_STATIONARY_DISTANCE_M
+    ):
+        return True
+
+    for lon, lat in points:
+        point_distance_m = haversine(
+            (lat, lon), CITY_HALL, unit=Unit.METERS
+        )
+        if point_distance_m > MAX_CITY_HALL_DISTANCE_M:
+            return True
+    return False
+
+
 def _fingerprint_source_row(row):
     """Create a compact fingerprint for exact duplicate detection."""
     serialized = json.dumps(
@@ -128,9 +169,16 @@ def _transform_row(row, line_number):
 
     taxi_id = _parse_integer(row.get("TAXI_ID"), "TAXI_ID", line_number)
     timestamp = _parse_integer(row.get("TIMESTAMP"), "TIMESTAMP", line_number)
-    start_time = datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(tzinfo=None)
+    # The source timestamp is Unix time (UTC). Store the corresponding Lisbon
+    # wall time because assignment queries use local calendar days and hours.
+    start_time = datetime.fromtimestamp(timestamp, tz=LISBON_TIMEZONE).replace(
+        tzinfo=None
+    )
     points = _parse_polyline(row.get("POLYLINE"), line_number)
     num_points = len(points)
+    duration_sec = max(num_points - 1, 0) * 15
+    distance_m = _calculate_distance_m(points)
+    is_outlier = _is_outlier_trip(points, duration_sec, distance_m)
 
     trip_values = (
         line_number - 1,  # Internal CSV row ordinal for batched FK mapping.
@@ -142,9 +190,9 @@ def _transform_row(row, line_number):
         start_time,
         _parse_boolean(row.get("MISSING_DATA"), line_number),
         num_points,
-        max(num_points - 1, 0) * 15,
-        _calculate_distance_m(points),
-        num_points < INVALID_POINT_THRESHOLD,
+        duration_sec,
+        distance_m,
+        is_outlier,
     )
     return taxi_id, trip_values, points
 
@@ -181,10 +229,10 @@ def _insert_trip_batch(cursor, trip_batch):
     return ids_by_source_row
 
 
-def _insert_point_batch(cursor, point_batch, ids_by_source_row, chunk_size):
+def _insert_point_batch(cursor, point_batch, ids_by_source_row):
     """Insert trajectory points in bounded chunks to limit query size."""
-    for start in range(0, len(point_batch), chunk_size):
-        chunk = point_batch[start : start + chunk_size]
+    for start in range(0, len(point_batch), POINT_BATCH_SIZE):
+        chunk = point_batch[start : start + POINT_BATCH_SIZE]
         values = [
             (ids_by_source_row[source_row], seq, lon, lat)
             for source_row, seq, lon, lat in chunk
@@ -192,43 +240,28 @@ def _insert_point_batch(cursor, point_batch, ids_by_source_row, chunk_size):
         cursor.executemany(INSERT_POINT, values)
 
 
-def _flush_batch(cursor, connection, taxi_batch, trip_batch, point_batch, point_chunk_size):
+def _flush_batch(cursor, connection, taxi_batch, trip_batch, point_batch):
     """Insert one batch in parent-before-child order and commit it."""
     if taxi_batch:
         cursor.executemany(
             "INSERT IGNORE INTO Taxi (taxi_id) VALUES (%s)", taxi_batch
         )
     ids_by_source_row = _insert_trip_batch(cursor, trip_batch)
-    _insert_point_batch(cursor, point_batch, ids_by_source_row, point_chunk_size)
+    _insert_point_batch(cursor, point_batch, ids_by_source_row)
     connection.commit()
 
 
-def load_trips(
-    cursor,
-    connection,
-    csv_path,
-    batch_size=500,
-    row_limit=None,
-    progress_every=10_000,
-    point_batch_size=10_000,
-):
-    """Load rows, tag trips with fewer than three points, and remove exact duplicates.
+def load_trips(cursor, connection, csv_path):
+    """Load trips, flag outliers, and remove exact duplicate source rows.
 
-    Returns (inserted trips, invalid trips, exact duplicate rows removed).
+    Returns (inserted trips, outlier trips, exact duplicate rows removed).
     """
     path = Path(csv_path).expanduser()
     if not path.is_file():
         raise FileNotFoundError(f"Taxi CSV file does not exist: {path}")
-    if batch_size < 1 or progress_every < 1 or point_batch_size < 1:
-        raise ValueError("Batch and progress sizes must be positive integers")
-    if row_limit is not None and row_limit < 1:
-        raise ValueError("row_limit must be a positive integer")
-
     inserted = 0
-    invalid_trips = 0
+    outlier_trips = 0
     duplicates_removed = 0
-    rows_read = 0
-    next_progress = progress_every
     seen_fingerprints = set()
     known_taxis = set()
     taxi_batch = []
@@ -241,10 +274,6 @@ def load_trips(
             _validate_csv_header(reader.fieldnames, path)
 
             for line_number, row in enumerate(reader, start=2):
-                if row_limit is not None and rows_read >= row_limit:
-                    break
-                rows_read += 1
-
                 fingerprint = _fingerprint_source_row(row)
                 if fingerprint in seen_fingerprints:
                     duplicates_removed += 1
@@ -253,7 +282,7 @@ def load_trips(
 
                 taxi_id, trip_values, points = _transform_row(row, line_number)
                 if trip_values[-1]:
-                    invalid_trips += 1
+                    outlier_trips += 1
                 if taxi_id not in known_taxis:
                     taxi_batch.append((taxi_id,))
                     known_taxis.add(taxi_id)
@@ -266,34 +295,22 @@ def load_trips(
                 )
                 inserted += 1
 
-                if len(trip_batch) >= batch_size:
+                if len(trip_batch) >= TRIP_BATCH_SIZE:
                     _flush_batch(
                         cursor, connection, taxi_batch, trip_batch,
-                        point_batch, point_batch_size,
+                        point_batch,
                     )
                     taxi_batch.clear()
                     trip_batch.clear()
                     point_batch.clear()
-                    while rows_read >= next_progress:
-                        print(
-                            f"Read {rows_read:,}; inserted {inserted:,}; "
-                            f"invalid (< 3 points) {invalid_trips:,}; "
-                            f"exact duplicates removed {duplicates_removed:,}",
-                            flush=True,
-                        )
-                        next_progress += progress_every
 
         if trip_batch:
             _flush_batch(
                 cursor, connection, taxi_batch, trip_batch,
-                point_batch, point_batch_size,
+                point_batch,
             )
     except Exception:
         connection.rollback()
         raise
 
-    print(
-        f"Inserted {inserted:,} trips; tagged {invalid_trips:,} invalid "
-        f"(< 3 points); removed {duplicates_removed:,} exact duplicate rows"
-    )
-    return inserted, invalid_trips, duplicates_removed
+    return inserted, outlier_trips, duplicates_removed

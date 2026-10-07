@@ -23,7 +23,7 @@ def create_tables(cursor, connection):
             num_points INT NOT NULL,
             duration_sec INT NOT NULL,
             distance_m DOUBLE NULL,
-            is_invalid BOOLEAN NOT NULL,
+            is_outlier BOOLEAN NOT NULL,
             UNIQUE INDEX uq_trip_source_row (source_row_number),
             INDEX idx_taxi (taxi_id),
             INDEX idx_start_time (start_time),
