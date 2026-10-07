@@ -54,6 +54,16 @@ three GPS points across the full dataset.
   least two hours, has an average speed above 120 km/h, has at least 20 points
   and a total distance below 200 m, or contains a point more than 300 km from
   Porto City Hall. Outliers remain stored in the database.
+- Rows with malformed fields or invalid trajectory coordinates are skipped and
+  appended to `rejected_rows.csv` with their source row number and the reason
+  they were rejected. Review this file after loading to see which source rows
+  were omitted. Valid rows continue to load after a rejected row.
+- The import stops on CSV header or parser errors, rejection-log errors, and
+  database errors. Trips are committed in batches, so a fatal error after
+  earlier batches have committed leaves those batches in the database. Reset
+  and reload before retrying a failed import. This is the import's fail-fast
+  policy for file or database failures; malformed individual rows are recorded
+  and skipped.
 
 Count flagged outliers with:
 

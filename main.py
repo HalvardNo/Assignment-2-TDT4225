@@ -1,6 +1,7 @@
 """Query the database by default; load or replace data only when requested."""
 
 import argparse
+import csv
 import os
 import sys
 from pathlib import Path
@@ -94,7 +95,7 @@ def main():
                     "to replace the assignment tables."
                 )
 
-        inserted, outlier_trips, duplicates_removed = load_trips(
+        inserted, outlier_trips, duplicates_removed, rejected_rows = load_trips(
             db.cursor,
             db.db_connection,
             csv_file,
@@ -102,12 +103,16 @@ def main():
         print(f"\nImport complete: {inserted:,} trips loaded.")
         print(f"Trips flagged as outliers: {outlier_trips:,}.")
         print(f"Exact duplicate source rows removed: {duplicates_removed:,}.")
+        print(f"Malformed source rows skipped: {rejected_rows:,}.")
+        if rejected_rows:
+            rejected_path = Path(__file__).resolve().with_name("rejected_rows.csv")
+            print(f"Rejected rows saved to: {rejected_path}")
         print_database_summary(db.cursor)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, FileNotFoundError, ConnectionError, RuntimeError) as error:
+    except (ValueError, OSError, csv.Error, RuntimeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         sys.exit(1)
