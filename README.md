@@ -30,8 +30,10 @@ that need it estimate it from the stored duration. Trips marked
 `missing_data` can have less accurate duration estimates.
 
 The query set uses MySQL 8 features (CTEs and `LAG`) and `ST_Distance_Sphere`
-for location and circular-trip calculations. Assignment queries exclude rows
-where `is_outlier = TRUE`; Question 7 specifically counts trips with fewer than
+for location and circular-trip calculations. The main assignment queries use
+the complete dataset, including trips flagged with `is_outlier = TRUE`.
+`outlier_comparison_queries.sql` contains matching queries for supplemental
+results with flagged trips excluded. Question 7 counts trips with fewer than
 three GPS points across the full dataset.
 
 ## Data model and cleaning

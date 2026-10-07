@@ -9,18 +9,9 @@ QUERY_1 = (
     "1. Number of taxis, trips, and GPS points",
     """
     SELECT
-        (
-            SELECT COUNT(DISTINCT taxi_id)
-            FROM Trip
-            WHERE is_outlier = FALSE
-        ) AS taxi_count,
-        (SELECT COUNT(*) FROM Trip WHERE is_outlier = FALSE) AS trip_count,
-        (
-            SELECT COUNT(*)
-            FROM TrajectoryPoint AS point
-            JOIN Trip AS trip ON trip.id = point.trip_id
-            WHERE trip.is_outlier = FALSE
-        ) AS gps_point_count
+        (SELECT COUNT(*) FROM Taxi) AS taxi_count,
+        (SELECT COUNT(*) FROM Trip) AS trip_count,
+        (SELECT COUNT(*) FROM TrajectoryPoint) AS gps_point_count
     """,
     ("Taxis", "Trips", "GPS points"),
 )
@@ -28,14 +19,11 @@ QUERY_1 = (
 QUERY_2 = (
     "2. Average number of trips per taxi",
     """
-    SELECT ROUND(AVG(trip_count)) AS average_trips_per_taxi
+    SELECT ROUND(AVG(trip_count), 2) AS average_trips_per_taxi
     FROM (
-        SELECT t.taxi_id, COUNT(tr.id) AS trip_count
-        FROM Taxi AS t
-        JOIN Trip AS tr
-          ON tr.taxi_id = t.taxi_id
-         AND tr.is_outlier = FALSE
-        GROUP BY t.taxi_id
+        SELECT taxi_id, COUNT(*) AS trip_count
+        FROM Trip
+        GROUP BY taxi_id
     ) AS taxi_trip_counts
     """,
     ("Average trips per taxi",),
@@ -46,7 +34,6 @@ QUERY_3 = (
     """
     SELECT taxi_id, COUNT(*) AS trip_count
     FROM Trip
-    WHERE is_outlier = FALSE
     GROUP BY taxi_id
     ORDER BY trip_count DESC, taxi_id
     LIMIT 20
@@ -60,7 +47,6 @@ QUERY_4A = (
     WITH taxi_call_counts AS (
         SELECT taxi_id, call_type, COUNT(*) AS trip_count
         FROM Trip
-        WHERE is_outlier = FALSE
         GROUP BY taxi_id, call_type
     ),
     taxi_max_counts AS (
@@ -94,7 +80,6 @@ QUERY_4B = (
         ROUND(100.0 * SUM(HOUR(start_time) >= 18) / COUNT(*), 2)
             AS share_18_24_pct
     FROM Trip
-    WHERE is_outlier = FALSE
     GROUP BY call_type
     ORDER BY call_type
     """,
@@ -117,7 +102,6 @@ QUERY_5 = (
         ROUND(SUM(duration_sec) / 3600.0, 2) AS total_hours,
         ROUND(SUM(COALESCE(distance_m, 0)), 2) AS total_distance_m
     FROM Trip
-    WHERE is_outlier = FALSE
     GROUP BY taxi_id
     ORDER BY SUM(duration_sec) DESC, taxi_id
     """,
@@ -132,7 +116,6 @@ QUERY_6 = (
     JOIN Trip AS tr ON tr.id = point.trip_id
     WHERE point.lat BETWEEN 41.15694 AND 41.15894
       AND point.lon BETWEEN -8.63041 AND -8.62781
-      AND tr.is_outlier = FALSE
       AND ST_Distance_Sphere(
             POINT(point.lon, point.lat),
             POINT(-8.62911, 41.15794)
@@ -151,7 +134,6 @@ QUERY_6_COUNT = (
         ON tr.id = point.trip_id
     WHERE point.lat BETWEEN 41.15694 AND 41.15894
       AND point.lon BETWEEN -8.63041 AND -8.62781
-      AND tr.is_outlier = FALSE
       AND ST_Distance_Sphere(
             POINT(point.lon, point.lat),
             POINT(-8.62911, 41.15794)
@@ -163,7 +145,7 @@ QUERY_6_COUNT = (
 QUERY_7 = (
     "7. Number of trips with fewer than 3 GPS points (full dataset)",
     """
-    SELECT COUNT(*) AS invalid_trip_count
+    SELECT COUNT(*) AS fewer_than_three_points
     FROM Trip
     WHERE num_points < 3
     """,
@@ -180,8 +162,7 @@ QUERY_8 = (
         start_time,
         TIMESTAMPADD(SECOND, duration_sec, start_time) AS estimated_end_time
     FROM Trip
-    WHERE is_outlier = FALSE
-      AND DATE(start_time) < DATE(TIMESTAMPADD(SECOND, duration_sec, start_time))
+    WHERE DATE(start_time) < DATE(TIMESTAMPADD(SECOND, duration_sec, start_time))
       AND DATE(TIMESTAMPADD(SECOND, duration_sec, start_time))
           < DATE_ADD(DATE(start_time), INTERVAL 2 DAY)
     ORDER BY start_time, id
@@ -205,8 +186,7 @@ QUERY_9 = (
       ON first_point.trip_id = tr.id AND first_point.seq = 0
     JOIN TrajectoryPoint AS last_point
       ON last_point.trip_id = tr.id AND last_point.seq = tr.num_points - 1
-    WHERE tr.is_outlier = FALSE
-      AND ST_Distance_Sphere(
+    WHERE ST_Distance_Sphere(
             POINT(first_point.lon, first_point.lat),
             POINT(last_point.lon, last_point.lat)
           ) <= 50
@@ -227,8 +207,7 @@ QUERY_9_COUNT = (
     JOIN TrajectoryPoint AS last_point
         ON last_point.trip_id = tr.id
         AND last_point.seq = tr.num_points - 1
-    WHERE tr.is_outlier = FALSE
-      AND ST_Distance_Sphere(
+    WHERE ST_Distance_Sphere(
         POINT(first_point.lon, first_point.lat),
         POINT(last_point.lon, last_point.lat)
     ) <= 50
@@ -250,7 +229,6 @@ QUERY_10 = (
                 start_time
             ) AS idle_seconds
         FROM Trip
-        WHERE is_outlier = FALSE
     )
     SELECT
         taxi_id,
@@ -266,8 +244,8 @@ QUERY_10 = (
 )
 
 ASSIGNMENT_QUERIES = (
-    #QUERY_1,
-    QUERY_2,
+    QUERY_1,
+    #QUERY_2,
     #QUERY_3,
     #QUERY_4A,
     #QUERY_4B,

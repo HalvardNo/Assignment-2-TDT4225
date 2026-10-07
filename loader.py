@@ -28,6 +28,8 @@ CSV_COLUMNS = (
     "POLYLINE",
 )
 
+#Assignment and EDA rules for outlier detection and data cleaning.
+
 OUTLIER_POINT_THRESHOLD = 3
 LISBON_TIMEZONE = ZoneInfo("Europe/Lisbon")
 CITY_HALL = (41.15794, -8.62911)  # latitude, longitude
