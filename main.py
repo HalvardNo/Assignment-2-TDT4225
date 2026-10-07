@@ -25,7 +25,7 @@ def print_database_summary(cursor):
     cursor.execute(
         """
         SELECT id, trip_id, taxi_id, start_time,
-               num_points, duration_sec, distance_m, is_invalid
+               num_points, duration_sec, distance_m, is_outlier
         FROM Trip
         ORDER BY id DESC
         LIMIT 5
@@ -38,29 +38,11 @@ def print_database_summary(cursor):
             rows,
             headers=[
                 "id", "source trip id", "taxi", "start time",
-                "points", "duration (s)", "distance (m)", "invalid (< 3 points)",
+                "points", "duration (s)", "distance (m)", "outlier",
             ],
             tablefmt="github",
         )
     )
-
-
-def repair_stored_durations(cursor, connection):
-    """Correct duration_sec in an already loaded database without reloading it."""
-    try:
-        cursor.execute(
-            """
-            UPDATE Trip
-            SET duration_sec = GREATEST(num_points - 1, 0) * 15
-            WHERE duration_sec <> GREATEST(num_points - 1, 0) * 15
-            """
-        )
-        updated_rows = cursor.rowcount
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    return updated_rows
 
 
 def main():
@@ -73,35 +55,13 @@ def main():
         help="import the CSV (without this flag, main only runs read-only queries)",
     )
     parser.add_argument(
-        "--repair-duration",
-        action="store_true",
-        help="correct stored Trip.duration_sec values in the existing database",
-    )
-    parser.add_argument(
         "--reset",
         action="store_true",
         help="drop existing assignment tables before loading; requires --load",
     )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        help="load only the first N CSV rows (useful for a quick trial)",
-    )
     args = parser.parse_args()
-    if args.repair_duration and (args.load or args.reset or args.limit is not None):
-        parser.error("--repair-duration cannot be combined with loading options")
     if args.reset and not args.load:
         parser.error("--reset requires --load; it drops the existing assignment data")
-    if args.limit is not None and not args.load:
-        parser.error("--limit requires --load")
-    if args.limit is not None and args.limit < 1:
-        raise ValueError("--limit must be a positive integer")
-
-    if args.repair_duration:
-        with DbConnector() as db:
-            updated_rows = repair_stored_durations(db.cursor, db.db_connection)
-        print(f"Corrected duration_sec for {updated_rows:,} trips.")
-        return
 
     if not args.load:
         with DbConnector() as db:
@@ -134,14 +94,13 @@ def main():
                     "to replace the assignment tables."
                 )
 
-        inserted, invalid_trips, duplicates_removed = load_trips(
+        inserted, outlier_trips, duplicates_removed = load_trips(
             db.cursor,
             db.db_connection,
             csv_file,
-            row_limit=args.limit,
         )
         print(f"\nImport complete: {inserted:,} trips loaded.")
-        print(f"Invalid trips (< 3 points): {invalid_trips:,}.")
+        print(f"Trips flagged as outliers: {outlier_trips:,}.")
         print(f"Exact duplicate source rows removed: {duplicates_removed:,}.")
         print_database_summary(db.cursor)
 
