@@ -126,7 +126,7 @@ QUERY_6 = (
 )
 
 QUERY_6_COUNT = (
-    "6. Total trips passing within 100 m of Porto City Hall",
+    "6 supplementary. Total trips passing within 100 m of Porto City Hall",
     """
     SELECT COUNT(DISTINCT tr.id) AS matching_trip_count
     FROM TrajectoryPoint AS point
@@ -170,6 +170,18 @@ QUERY_8 = (
     ("Trip row ID", "Source trip ID", "Taxi ID", "Start time", "Estimated end"),
 )
 
+QUERY_8_COUNT = (
+    "8 supplementary. Total midnight-crossing trips",
+    """
+    SELECT COUNT(*) AS midnight_crossing_trip_count
+    FROM Trip
+    WHERE DATE(start_time) < DATE(TIMESTAMPADD(SECOND, duration_sec, start_time))
+      AND DATE(TIMESTAMPADD(SECOND, duration_sec, start_time))
+          < DATE_ADD(DATE(start_time), INTERVAL 2 DAY)
+    """,
+    ("Midnight-crossing trips",),
+)
+
 QUERY_9 = (
     "9. Circular trips (start and end points within 50 m)",
     """
@@ -177,9 +189,12 @@ QUERY_9 = (
         tr.id,
         tr.trip_id,
         tr.taxi_id,
-        ST_Distance_Sphere(
-            POINT(first_point.lon, first_point.lat),
-            POINT(last_point.lon, last_point.lat)
+        ROUND(
+            ST_Distance_Sphere(
+                POINT(first_point.lon, first_point.lat),
+                POINT(last_point.lon, last_point.lat)
+            ),
+            2
         ) AS endpoint_distance_m
     FROM Trip AS tr
     JOIN TrajectoryPoint AS first_point
@@ -191,13 +206,12 @@ QUERY_9 = (
             POINT(last_point.lon, last_point.lat)
           ) <= 50
     ORDER BY tr.id
-    LIMIT 5
     """,
     ("Trip row ID", "Source trip ID", "Taxi ID", "Endpoint distance (m)"),
 )
 
 QUERY_9_COUNT = (
-    "9. Total circular trips (start and end within 50 m)",
+    "9 supplementary. Total circular trips (start and end within 50 m)",
     """
     SELECT COUNT(DISTINCT tr.id) AS circular_trip_count
     FROM Trip AS tr
@@ -224,7 +238,7 @@ QUERY_10 = (
             start_time,
             TIMESTAMPDIFF(
                 SECOND,
-            LAG(TIMESTAMPADD(SECOND, duration_sec, start_time))
+                LAG(TIMESTAMPADD(SECOND, duration_sec, start_time))
                     OVER (PARTITION BY taxi_id ORDER BY start_time, id),
                 start_time
             ) AS idle_seconds
@@ -245,18 +259,19 @@ QUERY_10 = (
 
 ASSIGNMENT_QUERIES = (
     QUERY_1,
-    #QUERY_2,
-    #QUERY_3,
-    #QUERY_4A,
-    #QUERY_4B,
-    #QUERY_5,
-    #QUERY_6,
-    #QUERY_6_COUNT,
-    #QUERY_7,
-    #QUERY_8,
-    #QUERY_9,
-    #QUERY_9_COUNT,
-    #QUERY_10,
+    QUERY_2,
+    QUERY_3,
+    QUERY_4A,
+    QUERY_4B,
+    QUERY_5,
+    QUERY_6,
+    QUERY_6_COUNT,
+    QUERY_7,
+    QUERY_8,
+    QUERY_8_COUNT,
+    QUERY_9,
+    QUERY_9_COUNT,
+    QUERY_10,
 )
 
 
