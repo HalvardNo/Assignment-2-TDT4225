@@ -39,9 +39,6 @@ columns: `TRIP_ID`, `CALL_TYPE`, `ORIGIN_CALL`, `ORIGIN_STAND`, `TAXI_ID`,
    PORTO_CSV_PATH=C:/path/to/porto.csv
    ```
 
-   `.env` is local and ignored by Git. Do not put your database password in a
-   tracked file.
-
 ## Install and run
 
 From the repository directory, install the Python dependencies:
