@@ -104,17 +104,3 @@ With `--load`, `main.py` connects through `DbConnector.py`, creates the tables
 using `schema.py`, then calls `loader.py` to import the CSV. Without `--load`,
 it connects to the configured database and runs the queries from `queries.py`.
 The EDA notebook is a separate workflow that reads the CSV directly.
-
-### Data handling
-
-- Exact duplicate rows are removed by comparing all nine source columns.
-  Different trips with the same `TRIP_ID` are retained because source IDs can
-  collide.
-- Optional `ORIGIN_CALL` and `ORIGIN_STAND` values are stored as `NULL`.
-  Malformed rows are logged and skipped; valid rows continue to load.
-- The `MISSING_DATA` flag is preserved, but missing GPS points are not
-  reconstructed. Duration is estimated as `(number of points - 1) * 15`
-  seconds, and distance sums the observed point-to-point segments. These
-  estimates can be low for trips with missing points.
-- `start_time` is stored in Porto local time for calendar and time-of-day
-  queries and is used by the idle-time query.
