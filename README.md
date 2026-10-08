@@ -7,7 +7,7 @@ database and load the assignment CSV into it.
 
 ## Requirements
 
-- Python and the packages listed in `requirements.txt`
+- Python 3.11 or later and the packages listed in `requirements.txt`
 - MySQL 8 or later
 - The Porto taxi CSV file (`porto.csv`) supplied for the assignment
 
@@ -81,7 +81,8 @@ configured in `.env`. Use it only if you intend to replace those tables.
 The optional EDA notebook is `eda/porto_eda.ipynb`. Open it in Jupyter from the
 repository, set `PORTO_CSV_PATH` in `.env` as above, and run its cells. It reads
 the CSV in chunks and saves plots to `eda/figures/`; those generated images are
-ignored by Git.
+ignored by Git. The spatial map uses Cartopy, which downloads its Natural Earth
+basemap files on the first run and therefore needs an internet connection then.
 
 ## Project structure
 
@@ -103,3 +104,17 @@ With `--load`, `main.py` connects through `DbConnector.py`, creates the tables
 using `schema.py`, then calls `loader.py` to import the CSV. Without `--load`,
 it connects to the configured database and runs the queries from `queries.py`.
 The EDA notebook is a separate workflow that reads the CSV directly.
+
+### Data handling
+
+- Exact duplicate rows are removed by comparing all nine source columns.
+  Different trips with the same `TRIP_ID` are retained because source IDs can
+  collide.
+- Optional `ORIGIN_CALL` and `ORIGIN_STAND` values are stored as `NULL`.
+  Malformed rows are logged and skipped; valid rows continue to load.
+- The `MISSING_DATA` flag is preserved, but missing GPS points are not
+  reconstructed. Duration is estimated as `(number of points - 1) * 15`
+  seconds, and distance sums the observed point-to-point segments. These
+  estimates can be low for trips with missing points.
+- `start_time` is stored in Porto local time for calendar and time-of-day
+  queries and is used by the idle-time query.
