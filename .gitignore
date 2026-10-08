@@ -11,6 +11,8 @@ ENV/
 
 # Environment variables / secrets
 .env
+.env.*
+!.env.example
 
 # Distribution / packaging
 build/
@@ -24,10 +26,11 @@ dist/
 # OS
 .DS_Store
 
-#Figures
-eda/figures
+# Generated notebook output
+eda/figures/
+eda/.ipynb_checkpoints/
+*.png
 
-#additional files to ignore here
+# Local/generated files
 chapter2_updated.tex
-outlier_comparison_queries.sql
 rejected_rows.csv
