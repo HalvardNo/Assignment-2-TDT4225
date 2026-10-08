@@ -29,6 +29,7 @@ dist/
 # Generated notebook output
 eda/figures/
 eda/.ipynb_checkpoints/
+*.png
 
 # Local/generated files
 chapter2_updated.tex

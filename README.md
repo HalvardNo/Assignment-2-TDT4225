@@ -83,11 +83,23 @@ repository, set `PORTO_CSV_PATH` in `.env` as above, and run its cells. It reads
 the CSV in chunks and saves plots to `eda/figures/`; those generated images are
 ignored by Git.
 
-## Project files
+## Project structure
 
-- `main.py`, `loader.py`, `schema.py`, and `DbConnector.py` implement loading,
-  schema setup, and MySQL connection management.
-- `queries.py` contains the assignment queries run by `main.py`.
-- `outlier_comparison_queries.sql` contains supplementary comparisons that
-  exclude trips flagged as outliers.
-- `eda/porto_eda.ipynb` contains the exploratory analysis.
+```text
+.
+|-- main.py                       Command-line entry point
+|-- DbConnector.py                Opens the MySQL connection from .env
+|-- schema.py                     Creates and drops the assignment tables
+|-- loader.py                     Cleans the CSV and inserts trips and GPS points
+|-- queries.py                    Defines and runs the assignment queries
+|-- outlier_comparison_queries.sql Supplementary queries excluding outliers
+|-- requirements.txt              Python dependencies
+|-- .env.example                  Template for local database and CSV settings
+`-- eda/
+    `-- porto_eda.ipynb           Exploratory data analysis notebook
+```
+
+With `--load`, `main.py` connects through `DbConnector.py`, creates the tables
+using `schema.py`, then calls `loader.py` to import the CSV. Without `--load`,
+it connects to the configured database and runs the queries from `queries.py`.
+The EDA notebook is a separate workflow that reads the CSV directly.
