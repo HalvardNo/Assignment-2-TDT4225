@@ -26,3 +26,8 @@ dist/
 
 #Figures
 eda/figures
+
+#additional files to ignore here
+chapter2_updated.tex
+outlier_comparison_queries.sql
+rejected_rows.csv

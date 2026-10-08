@@ -28,6 +28,8 @@ CSV_COLUMNS = (
     "POLYLINE",
 )
 
+#Assignment and EDA rules for outlier detection and data cleaning.
+
 OUTLIER_POINT_THRESHOLD = 3
 LISBON_TIMEZONE = ZoneInfo("Europe/Lisbon")
 CITY_HALL = (41.15794, -8.62911)  # latitude, longitude
@@ -38,6 +40,7 @@ MIN_STATIONARY_DISTANCE_M = 200
 MAX_CITY_HALL_DISTANCE_M = 300_000
 TRIP_BATCH_SIZE = 500
 POINT_BATCH_SIZE = 10_000
+REJECTED_ROWS_PATH = Path(__file__).resolve().with_name("rejected_rows.csv")
 
 INSERT_TRIP = """
     INSERT INTO Trip (
@@ -171,9 +174,14 @@ def _transform_row(row, line_number):
     timestamp = _parse_integer(row.get("TIMESTAMP"), "TIMESTAMP", line_number)
     # The source timestamp is Unix time (UTC). Store the corresponding Lisbon
     # wall time because assignment queries use local calendar days and hours.
-    start_time = datetime.fromtimestamp(timestamp, tz=LISBON_TIMEZONE).replace(
-        tzinfo=None
-    )
+    try:
+        start_time = datetime.fromtimestamp(
+            timestamp, tz=LISBON_TIMEZONE
+        ).replace(tzinfo=None)
+    except (OSError, OverflowError, ValueError) as error:
+        raise ValueError(
+            f"CSV line {line_number}: TIMESTAMP is outside the supported range"
+        ) from error
     points = _parse_polyline(row.get("POLYLINE"), line_number)
     num_points = len(points)
     duration_sec = max(num_points - 1, 0) * 15
@@ -201,10 +209,59 @@ def _validate_csv_header(fieldnames, path):
     """Fail early if the input CSV does not have the expected columns."""
     if fieldnames is None:
         raise ValueError(f"CSV file is empty: {path}")
+    if len(fieldnames) != len(set(fieldnames)):
+        raise ValueError(f"CSV has duplicate column names: {path}")
     missing_columns = set(CSV_COLUMNS).difference(fieldnames)
     if missing_columns:
         missing = ", ".join(sorted(missing_columns))
         raise ValueError(f"CSV is missing required columns: {missing}")
+
+
+def _validate_csv_row(row, line_number):
+    """Reject records whose CSV structure does not match the header."""
+    if None in row:
+        raise ValueError(f"CSV line {line_number}: row has extra fields")
+    missing_fields = [column for column in CSV_COLUMNS if row.get(column) is None]
+    if missing_fields:
+        missing = ", ".join(missing_fields)
+        raise ValueError(f"CSV line {line_number}: row is missing fields: {missing}")
+
+
+def _open_rejected_rows_log():
+    """Open the append-only CSV that records malformed source rows."""
+    log_file = REJECTED_ROWS_PATH.open("a+", encoding="utf-8", newline="")
+    expected_header = [
+        "source_file", "source_row_number", "error", "extra_fields", *CSV_COLUMNS
+    ]
+    log_file.seek(0)
+    existing_header = next(csv.reader(log_file), None)
+    if existing_header is not None and existing_header != expected_header:
+        log_file.close()
+        raise RuntimeError(
+            f"Rejected-row log has an unexpected header: {REJECTED_ROWS_PATH}"
+        )
+    log_file.seek(0, 2)
+    writer = csv.writer(log_file)
+    if existing_header is None:
+        writer.writerow(expected_header)
+    return log_file, writer
+
+
+def _record_rejected_row(log_file, writer, path, row_number, row, error):
+    """Append the rejected source record and return its open log and writer."""
+    if log_file is None:
+        log_file, writer = _open_rejected_rows_log()
+    writer.writerow(
+        [
+            path.name,
+            row_number,
+            str(error),
+            json.dumps(row.get(None, []), ensure_ascii=False),
+            *(row.get(column) for column in CSV_COLUMNS),
+        ]
+    )
+    log_file.flush()
+    return log_file, writer
 
 
 def _insert_trip_batch(cursor, trip_batch):
@@ -252,9 +309,9 @@ def _flush_batch(cursor, connection, taxi_batch, trip_batch, point_batch):
 
 
 def load_trips(cursor, connection, csv_path):
-    """Load trips, flag outliers, and remove exact duplicate source rows.
+    """Load valid trips and record malformed rows for later review.
 
-    Returns (inserted trips, outlier trips, exact duplicate rows removed).
+    Returns (inserted trips, outlier trips, duplicate rows removed, rejected rows).
     """
     path = Path(csv_path).expanduser()
     if not path.is_file():
@@ -262,11 +319,14 @@ def load_trips(cursor, connection, csv_path):
     inserted = 0
     outlier_trips = 0
     duplicates_removed = 0
+    rejected_rows = 0
     seen_fingerprints = set()
     known_taxis = set()
     taxi_batch = []
     trip_batch = []
     point_batch = []
+    rejected_file = None
+    rejected_writer = None
 
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as csv_file:
@@ -274,13 +334,40 @@ def load_trips(cursor, connection, csv_path):
             _validate_csv_header(reader.fieldnames, path)
 
             for line_number, row in enumerate(reader, start=2):
+                try:
+                    _validate_csv_row(row, line_number)
+                except ValueError as error:
+                    rejected_file, rejected_writer = _record_rejected_row(
+                        rejected_file,
+                        rejected_writer,
+                        path,
+                        line_number - 1,
+                        row,
+                        error,
+                    )
+                    rejected_rows += 1
+                    continue
+
                 fingerprint = _fingerprint_source_row(row)
                 if fingerprint in seen_fingerprints:
                     duplicates_removed += 1
                     continue
-                seen_fingerprints.add(fingerprint)
 
-                taxi_id, trip_values, points = _transform_row(row, line_number)
+                try:
+                    taxi_id, trip_values, points = _transform_row(row, line_number)
+                except ValueError as error:
+                    rejected_file, rejected_writer = _record_rejected_row(
+                        rejected_file,
+                        rejected_writer,
+                        path,
+                        line_number - 1,
+                        row,
+                        error,
+                    )
+                    rejected_rows += 1
+                    continue
+
+                seen_fingerprints.add(fingerprint)
                 if trip_values[-1]:
                     outlier_trips += 1
                 if taxi_id not in known_taxis:
@@ -312,5 +399,8 @@ def load_trips(cursor, connection, csv_path):
     except Exception:
         connection.rollback()
         raise
+    finally:
+        if rejected_file is not None:
+            rejected_file.close()
 
-    return inserted, outlier_trips, duplicates_removed
+    return inserted, outlier_trips, duplicates_removed, rejected_rows
