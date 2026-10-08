@@ -1,72 +1,93 @@
 # TDT4225 Assignment 2
 
-## Configure and run
+This repository contains the assignment's Porto taxi data loader, MySQL queries,
+and exploratory analysis notebook. The database used during development is not
+included or publicly accessible. To run the program, configure your own MySQL
+database and load the assignment CSV into it.
 
-1. Install the dependencies with `pip install -r requirements.txt`.
-2. Copy `.env.example` to `.env` and set the MySQL connection values and CSV
-   path. Keep `.env` private; it contains the database password.
-3. Make sure the target database exists and the configured MySQL user can query
-   it. Loading also requires permission to create and insert into tables.
-4. Run `python main.py` to execute the queries configured in
-   `ASSIGNMENT_QUERIES` in `queries.py` against the existing database.
-5. To import the full CSV into an empty database, run `python main.py --load`.
+## Requirements
 
-`MYSQL_HOST` should be the VM's address as seen by the computer running Python.
-Use `127.0.0.1` when Python runs on the same machine as MySQL. When Python runs
-on another computer, use the VM's reachable IP or DNS name and allow that
-computer to connect to MySQL on `MYSQL_PORT` (3306 by default). `MYSQL_DATABASE`
-must already exist; the loader creates the assignment tables inside it.
+- Python and the packages listed in `requirements.txt`
+- MySQL 8 or later
+- The Porto taxi CSV file (`porto.csv`) supplied for the assignment
 
-`python main.py --load --reset` drops and recreates `Taxi`, `Trip`, and
-`TrajectoryPoint`, replacing their data. `--reset` requires `--load`, and a
-load without `--reset` refuses to append a second import when `Trip` already
-has rows. Do not use reset on the database that already contains the uploaded
-assignment data.
+The CSV is not included in this repository. The loader expects the original
+columns: `TRIP_ID`, `CALL_TYPE`, `ORIGIN_CALL`, `ORIGIN_STAND`, `TAXI_ID`,
+`TIMESTAMP`, `DAY_TYPE`, `MISSING_DATA`, and `POLYLINE`.
 
-The loader stores duration as `max(num_points - 1, 0) * 15` seconds and sums
-Haversine distances between consecutive points. Distance is `NULL` for trips
-with fewer than two points. The schema has no source end timestamp, so queries
-that need it estimate it from the stored duration. Trips marked
-`missing_data` can have less accurate duration estimates.
+## Set up your database
 
-The query set uses MySQL 8 features (CTEs and `LAG`) and `ST_Distance_Sphere`
-for location and circular-trip calculations. The main assignment queries use
-the complete dataset, including trips flagged with `is_outlier = TRUE`.
-`outlier_comparison_queries.sql` contains matching queries for supplemental
-results with flagged trips excluded. Question 7 counts trips with fewer than
-three GPS points across the full dataset.
+1. Start your MySQL server and create an empty database. For example, from a
+   MySQL client:
 
-## Data model and cleaning
+   ```sql
+   CREATE DATABASE assignment2;
+   ```
 
-- `Trip.id` is the auto-increment primary key. `Trip.trip_id` stores the source
-  CSV identifier and is indexed but not unique because source IDs can collide.
-- `source_row_number` is an internal unique source-row ordinal used to link
-  batched trips to their generated IDs and trajectory points.
-- The loader compares all nine source fields when removing exact duplicate
-  rows. Distinct rows with the same `TRIP_ID` are retained.
-- `DAY_TYPE` is omitted from the database because it is constant in the
-  dataset. `TIMESTAMP` is Unix time in UTC; the loader converts it to a
-  timezone-free Porto local `DATETIME` in `Trip.start_time` using
-  `Europe/Lisbon`, including daylight-saving changes.
-- `POLYLINE` is parsed into rows in `TrajectoryPoint`. `Trip` stores the point
-  count, duration, distance, and outlier flag.
-- `Trip.is_outlier` is true if a trip has fewer than three points, lasts at
-  least two hours, has an average speed above 120 km/h, has at least 20 points
-  and a total distance below 200 m, or contains a point more than 300 km from
-  Porto City Hall. Outliers remain stored in the database.
-- Rows with malformed fields or invalid trajectory coordinates are skipped and
-  appended to `rejected_rows.csv` with their source row number and the reason
-  they were rejected. Review this file after loading to see which source rows
-  were omitted. Valid rows continue to load after a rejected row.
-- The import stops on CSV header or parser errors, rejection-log errors, and
-  database errors. Trips are committed in batches, so a fatal error after
-  earlier batches have committed leaves those batches in the database. Reset
-  and reload before retrying a failed import. This is the import's fail-fast
-  policy for file or database failures; malformed individual rows are recorded
-  and skipped.
+2. Use a MySQL account that can connect to this database. To import data, that
+   account needs permission to create tables, insert rows, and read rows. The
+   `--reset` option also needs permission to drop tables.
+3. Copy `.env.example` to `.env` and fill in your own connection details and the
+   full path to `porto.csv`:
 
-Count flagged outliers with:
+   ```dotenv
+   MYSQL_HOST=127.0.0.1
+   MYSQL_PORT=3306
+   MYSQL_DATABASE=assignment2
+   MYSQL_USER=your_mysql_user
+   USER_PASSWORD=your_mysql_password
+   PORTO_CSV_PATH=C:/path/to/porto.csv
+   ```
 
-```sql
-SELECT COUNT(*) FROM Trip WHERE is_outlier = TRUE;
+   `.env` is local and ignored by Git. Do not put your database password in a
+   tracked file.
+
+## Install and run
+
+From the repository directory, install the Python dependencies:
+
+```bash
+python -m pip install -r requirements.txt
 ```
+
+Import the CSV and create the assignment tables in your database:
+
+```bash
+python main.py --load
+```
+
+After the import, run the assignment queries:
+
+```bash
+python main.py
+```
+
+Running `main.py` without `--load` only runs queries; it expects the assignment
+tables and data to already exist in the database configured in `.env`. The
+initial import reads the full CSV and may take some time. Malformed rows are
+skipped and recorded in `rejected_rows.csv`.
+
+To replace the assignment tables and import from scratch, run:
+
+```bash
+python main.py --load --reset
+```
+
+This drops and recreates `Taxi`, `Trip`, and `TrajectoryPoint` in the database
+configured in `.env`. Use it only if you intend to replace those tables.
+
+## Exploratory analysis
+
+The optional EDA notebook is `eda/porto_eda.ipynb`. Open it in Jupyter from the
+repository, set `PORTO_CSV_PATH` in `.env` as above, and run its cells. It reads
+the CSV in chunks and saves plots to `eda/figures/`; those generated images are
+ignored by Git.
+
+## Project files
+
+- `main.py`, `loader.py`, `schema.py`, and `DbConnector.py` implement loading,
+  schema setup, and MySQL connection management.
+- `queries.py` contains the assignment queries run by `main.py`.
+- `outlier_comparison_queries.sql` contains supplementary comparisons that
+  exclude trips flagged as outliers.
+- `eda/porto_eda.ipynb` contains the exploratory analysis.
