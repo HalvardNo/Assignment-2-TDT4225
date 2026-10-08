@@ -1,44 +1,60 @@
-import mysql.connector as mysql
+"""Load MySQL settings and manage one database connection."""
+
+import os
+
+import mysql.connector
 
 
 class DbConnector:
-    """
-    Connects to the MySQL server on the Ubuntu virtual machine.
-    Connector needs HOST, DATABASE, USER and PASSWORD to connect,
-    while PORT is optional and should be 3306.
+    """Open and close a MySQL connection using settings from ``.env``.
 
-    Example:
-    HOST = "tdt4225-00.idi.ntnu.no" // Your server IP address/domain name
-    DATABASE = "testdb" // Database name, if you just want to connect to MySQL server, leave it empty
-    USER = "testuser" // This is the user you created and added privileges for
-    PASSWORD = "test123" // The password you set for said user
+    Set ``MYSQL_HOST``, ``MYSQL_DATABASE``, ``MYSQL_USER``, and
+    ``USER_PASSWORD``. ``MYSQL_PORT`` defaults to 3306.
     """
 
-    def __init__(self,
-                 HOST="tdt4225-xx.idi.ntnu.no",
-                 DATABASE="DATABASE_NAME",
-                 USER="TEST_USER",
-                 PASSWORD="test123"):
-        # Connect to the database
+    def __init__(self):
+        required = ("MYSQL_HOST", "MYSQL_DATABASE", "MYSQL_USER", "USER_PASSWORD")
+        missing = [name for name in required if not os.getenv(name)]
+        if missing:
+            raise ValueError(f"Set these database settings in .env: {', '.join(missing)}.")
+
+        self.host = os.environ["MYSQL_HOST"]
+        self.port = int(os.getenv("MYSQL_PORT", "3306"))
+        self.database = os.environ["MYSQL_DATABASE"]
+        self.user = os.environ["MYSQL_USER"]
+        password = os.environ["USER_PASSWORD"]
+
+        self.db_connection = None
+        self.cursor = None
+
         try:
-            self.db_connection = mysql.connect(host=HOST, database=DATABASE, user=USER, password=PASSWORD, port=3306)
-        except Exception as e:
-            print("ERROR: Failed to connect to db:", e)
-
-        # Get the db cursor
-        self.cursor = self.db_connection.cursor()
-
-        print("Connected to:", self.db_connection.get_server_info())
-        # get database information
-        self.cursor.execute("select database();")
-        database_name = self.cursor.fetchone()
-        print("You are connected to the database:", database_name)
-        print("-----------------------------------------------\n")
+            self.db_connection = mysql.connector.connect(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.user,
+                password=password,
+                connection_timeout=10,
+            )
+            self.cursor = self.db_connection.cursor()
+        except mysql.connector.Error as error:
+            self.close_connection()
+            raise ConnectionError(
+                f"Could not connect to MySQL at {self.host}:{self.port} "
+                f"(database '{self.database}', user '{self.user}'): {error}"
+            ) from error
 
     def close_connection(self):
-        # close the cursor
-        self.cursor.close()
-        # close the DB connection
-        self.db_connection.close()
-        print("\n-----------------------------------------------")
-        print("Connection to %s is closed" % self.db_connection.get_server_info())
+        """Close the cursor and connection if they were opened."""
+        if self.cursor is not None:
+            self.cursor.close()
+            self.cursor = None
+        if self.db_connection is not None:
+            self.db_connection.close()
+            self.db_connection = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exception_type, exception, traceback):
+        self.close_connection()
